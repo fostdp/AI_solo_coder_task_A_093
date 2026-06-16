@@ -1,8 +1,8 @@
 class SeismographApp {
     constructor() {
         this.seismograph3d = null;
+        this.sensitivityPanel = null;
         this.waveform = null;
-        this.sensitivityChart = null;
         this.historyChart = null;
         this.deviceId = 'device_001';
         this.isSimulationRunning = false;
@@ -14,11 +14,14 @@ class SeismographApp {
     }
 
     init() {
-        this.seismograph3d = new Seismograph3D();
+        this.seismograph3d = new Seismoscope3D();
         this.seismograph3d.init('seismograph-3d');
 
         this.waveform = new WaveformRenderer('waveform-canvas');
         this.waveform.start();
+
+        this.sensitivityPanel = new SensitivityPanel();
+        this.sensitivityPanel.init();
 
         this.initCharts();
         this.bindEvents();
@@ -27,56 +30,6 @@ class SeismographApp {
     }
 
     initCharts() {
-        const sensitivityCtx = document.getElementById('sensitivity-chart').getContext('2d');
-        this.sensitivityChart = new Chart(sensitivityCtx, {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [
-                    {
-                        label: '检测概率 (%)',
-                        data: [],
-                        borderColor: '#ffd700',
-                        backgroundColor: 'rgba(255, 215, 0, 0.1)',
-                        fill: true,
-                        tension: 0.4,
-                    },
-                    {
-                        label: '误报率 (%)',
-                        data: [],
-                        borderColor: '#ef4444',
-                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                        fill: true,
-                        tension: 0.4,
-                    },
-                ],
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        labels: {
-                            color: '#e8e8e8',
-                            font: { size: 11 },
-                        },
-                    },
-                },
-                scales: {
-                    x: {
-                        ticks: { color: '#888' },
-                        grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                    },
-                    y: {
-                        min: 0,
-                        max: 100,
-                        ticks: { color: '#888' },
-                        grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                    },
-                },
-            },
-        });
-
         const historyCtx = document.getElementById('history-chart').getContext('2d');
         this.historyChart = new Chart(historyCtx, {
             type: 'line',
@@ -449,86 +402,9 @@ class SeismographApp {
     }
 
     async runSensitivityAnalysis() {
-        const analysisType = document.getElementById('analysis-type').value;
-        
-        const params = {
-            type: analysisType,
-            min_magnitude: 3,
-            max_magnitude: 8,
-            min_distance: 10,
-            max_distance: 500,
-            num_samples: 20,
-        };
-
-        try {
-            const result = await API.runSensitivityAnalysis(params);
-            
-            if (result && result.success && result.data) {
-                this.updateSensitivityChart(result.data, analysisType);
-                this.updateAnalysisResult(result.data, analysisType);
-            }
-        } catch (error) {
-            console.error('运行灵敏度分析失败:', error);
+        if (this.sensitivityPanel) {
+            await this.sensitivityPanel.runAnalysis();
         }
-    }
-
-    updateSensitivityChart(data, analysisType) {
-        if (!this.sensitivityChart) return;
-
-        let labels = [];
-        let detectionData = [];
-        let falseAlarmData = [];
-
-        if (analysisType === 'magnitude' && data.magnitude_sensitivity) {
-            labels = data.magnitude_sensitivity.map(d => d.magnitude.toFixed(1));
-            detectionData = data.magnitude_sensitivity.map(d => d.detection_probability * 100);
-            falseAlarmData = data.magnitude_sensitivity.map(d => d.false_alarm_rate * 100);
-        } else if (analysisType === 'distance' && data.distance_sensitivity) {
-            labels = data.distance_sensitivity.map(d => d.distance.toFixed(0));
-            detectionData = data.distance_sensitivity.map(d => d.detection_probability * 100);
-            falseAlarmData = data.distance_sensitivity.map(d => d.false_alarm_rate * 100);
-        } else if (data.results && data.results.length > 0) {
-            labels = data.results.map((_, i) => i.toString());
-            detectionData = data.results.map(d => (d.detection_probability || 0) * 100);
-            falseAlarmData = data.results.map(d => (d.false_alarm_rate || 0) * 100);
-        }
-
-        this.sensitivityChart.data.labels = labels;
-        this.sensitivityChart.data.datasets[0].data = detectionData;
-        this.sensitivityChart.data.datasets[1].data = falseAlarmData;
-        this.sensitivityChart.update();
-    }
-
-    updateAnalysisResult(data, analysisType) {
-        const resultEl = document.getElementById('analysis-result');
-        let html = '';
-
-        if (analysisType === 'detection_range') {
-            html = `
-                <strong>检测范围分析结果：</strong><br>
-                最大检测距离: <span style="color: #ffd700;">${data.max_detection_distance?.toFixed(1) || '--'} km</span><br>
-                最小检测震级: <span style="color: #ffd700;">${data.min_detection_magnitude?.toFixed(1) || '--'}</span><br>
-                有效检测面积: <span style="color: #ffd700;">${data.detection_area?.toFixed(1) || '--'} km²</span>
-            `;
-        } else if (analysisType === 'optimize' && data.optimal_params) {
-            html = `
-                <strong>参数优化结果：</strong><br>
-                最优刚度: <span style="color: #ffd700;">${data.optimal_params.stiffness?.toFixed(0) || '--'} N/m</span><br>
-                最优阻尼: <span style="color: #ffd700;">${data.optimal_params.damping?.toFixed(0) || '--'}</span><br>
-                综合评分: <span style="color: #4ade80;">${(data.optimal_score * 100)?.toFixed(1) || '--'}%</span>
-            `;
-        } else if (data.avg_detection_probability !== undefined) {
-            html = `
-                <strong>灵敏度分析结果：</strong><br>
-                平均检测概率: <span style="color: #4ade80;">${(data.avg_detection_probability * 100).toFixed(1)}%</span><br>
-                平均误报率: <span style="color: ${data.avg_false_alarm_rate > 0.1 ? '#ef4444' : '#4ade80'};">${(data.avg_false_alarm_rate * 100).toFixed(1)}%</span><br>
-                平均响应时间: <span style="color: #ffd700;">${data.avg_response_time?.toFixed(3) || '--'} s</span>
-            `;
-        } else {
-            html = '<strong>分析完成</strong><br>查看上方图表了解详细结果。';
-        }
-
-        resultEl.innerHTML = html;
     }
 
     async refreshAlerts() {
@@ -644,6 +520,7 @@ class SeismographApp {
         
         if (this.waveform) this.waveform.stop();
         if (this.seismograph3d) this.seismograph3d.dispose();
+        if (this.sensitivityPanel) this.sensitivityPanel.dispose();
     }
 }
 

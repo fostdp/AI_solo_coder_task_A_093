@@ -10,6 +10,8 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+option(USE_BOOST_LOCKFREE "Use Boost.Lockfree queues" OFF)
+
 set(SOURCES
     src/main.cpp
     src/column_simulation.cpp
@@ -19,6 +21,11 @@ set(SOURCES
     src/mqtt_client.cpp
     src/http_server.cpp
     src/alert_manager.cpp
+    src/config_loader.cpp
+    src/udp_receiver.cpp
+    src/seismic_simulator.cpp
+    src/sensitivity_analyzer.cpp
+    src/alarm_mqtt.cpp
 )
 
 set(HEADERS
@@ -30,6 +37,12 @@ set(HEADERS
     include/mqtt_client.h
     include/http_server.h
     include/alert_manager.h
+    include/config_loader.h
+    include/message_queue.h
+    include/udp_receiver.h
+    include/seismic_simulator.h
+    include/sensitivity_analyzer.h
+    include/alarm_mqtt.h
 )
 
 add_executable(seismograph_backend ${SOURCES} ${HEADERS})
@@ -38,6 +51,12 @@ target_include_directories(seismograph_backend PRIVATE include)
 
 if(WIN32)
     target_link_libraries(seismograph_backend PRIVATE ws2_32)
+endif()
+
+if(USE_BOOST_LOCKFREE)
+    find_package(Boost REQUIRED)
+    target_include_directories(seismograph_backend PRIVATE ${Boost_INCLUDE_DIRS})
+    target_compile_definitions(seismograph_backend PRIVATE SEISMOGRAPH_USE_BOOST_LOCKFREE)
 endif()
 
 target_compile_definitions(seismograph_backend PRIVATE _WIN32_WINNT=0x0601)
