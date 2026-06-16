@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>古代地动仪都柱地震响应仿真与灵敏度分析系统</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <h1>🏯 古代地动仪都柱地震响应仿真与灵敏度分析系统</h1>
+                <div class="status-bar">
+                    <div class="status-item">
+                        <span class="status-label">连接状态:</span>
+                        <span id="connection-status" class="status-value connected">● 已连接</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">设备ID:</span>
+                        <span id="device-id" class="status-value">device_001</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">最后更新:</span>
+                        <span id="last-update" class="status-value">--</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <div class="left-panel">
+                <div class="card">
+                    <h2>🌍 地动仪三维模型</h2>
+                    <div id="seismograph-3d" class="model-container"></div>
+                    <div class="model-controls">
+                        <button id="reset-view" class="btn btn-secondary">重置视角</button>
+                        <button id="auto-rotate" class="btn btn-secondary">自动旋转</button>
+                        <button id="trigger-simulation" class="btn btn-primary">触发仿真</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>📊 地震波波形</h2>
+                    <div class="waveform-container">
+                        <canvas id="waveform-canvas"></canvas>
+                        <div class="waveform-controls">
+                            <label>
+                                <input type="checkbox" id="show-x" checked> X轴
+                            </label>
+                            <label>
+                                <input type="checkbox" id="show-y" checked> Y轴
+                            </label>
+                            <label>
+                                <input type="checkbox" id="show-z" checked> Z轴
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>🎯 都柱运动状态</h2>
+                    <div class="column-status">
+                        <div class="status-grid">
+                            <div class="status-box">
+                                <span class="status-box-label">X位移</span>
+                                <span id="disp-x" class="status-box-value">0.000</span>
+                                <span class="status-box-unit">m</span>
+                            </div>
+                            <div class="status-box">
+                                <span class="status-box-label">Y位移</span>
+                                <span id="disp-y" class="status-box-value">0.000</span>
+                                <span class="status-box-unit">m</span>
+                            </div>
+                            <div class="status-box">
+                                <span class="status-box-label">Z位移</span>
+                                <span id="disp-z" class="status-box-value">0.000</span>
+                                <span class="status-box-unit">m</span>
+                            </div>
+                            <div class="status-box">
+                                <span class="status-box-label">X倾角</span>
+                                <span id="angle-x" class="status-box-value">0.000</span>
+                                <span class="status-box-unit">rad</span>
+                            </div>
+                            <div class="status-box">
+                                <span class="status-box-label">Y倾角</span>
+                                <span id="angle-y" class="status-box-value">0.000</span>
+                                <span class="status-box-unit">rad</span>
+                            </div>
+                            <div class="status-box">
+                                <span class="status-box-label">触发状态</span>
+                                <span id="trigger-status" class="status-box-value status-normal">正常</span>
+                                <span class="status-box-unit">-</span>
+                            </div>
+                        </div>
+                        
+                        <div class="direction-indicator">
+                            <h3>八方龙头触发状态</h3>
+                            <div class="compass">
+                                <div class="compass-ring">
+                                    <div class="direction" data-dir="0" style="--angle: 0deg;">
+                                        <span class="dir-name">北</span>
+                                        <div class="dragon-head" id="dragon-0"></div>
+                                    </div>
+                                    <div class="direction" data-dir="1" style="--angle: 45deg;">
+                                        <span class="dir-name">东北</span>
+                                        <div class="dragon-head" id="dragon-1"></div>
+                                    </div>
+                                    <div class="direction" data-dir="2" style="--angle: 90deg;">
+                                        <span class="dir-name">东</span>
+                                        <div class="dragon-head" id="dragon-2"></div>
+                                    </div>
+                                    <div class="direction" data-dir="3" style="--angle: 135deg;">
+                                        <span class="dir-name">东南</span>
+                                        <div class="dragon-head" id="dragon-3"></div>
+                                    </div>
+                                    <div class="direction" data-dir="4" style="--angle: 180deg;">
+                                        <span class="dir-name">南</span>
+                                        <div class="dragon-head" id="dragon-4"></div>
+                                    </div>
+                                    <div class="direction" data-dir="5" style="--angle: 225deg;">
+                                        <span class="dir-name">西南</span>
+                                        <div class="dragon-head" id="dragon-5"></div>
+                                    </div>
+                                    <div class="direction" data-dir="6" style="--angle: 270deg;">
+                                        <span class="dir-name">西</span>
+                                        <div class="dragon-head" id="dragon-6"></div>
+                                    </div>
+                                    <div class="direction" data-dir="7" style="--angle: 315deg;">
+                                        <span class="dir-name">西北</span>
+                                        <div class="dragon-head" id="dragon-7"></div>
+                                    </div>
+                                </div>
+                                <div class="compass-center">
+                                    <div class="column-indicator" id="column-indicator"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="right-panel">
+                <div class="card">
+                    <h2>⚡ 地震参数</h2>
+                    <div class="param-form">
+                        <div class="form-group">
+                            <label for="magnitude">震级</label>
+                            <input type="range" id="magnitude" min="2" max="8" step="0.1" value="5">
+                            <span id="magnitude-value">5.0</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="distance">震中距 (km)</label>
+                            <input type="range" id="distance" min="10" max="500" step="10" value="50">
+                            <span id="distance-value">50</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="duration">持续时间 (s)</label>
+                            <input type="range" id="duration" min="5" max="30" step="1" value="10">
+                            <span id="duration-value">10</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="stiffness">都柱刚度 (N/m)</label>
+                            <input type="range" id="stiffness" min="10000" max="100000" step="1000" value="50000">
+                            <span id="stiffness-value">50000</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="damping">阻尼系数</label>
+                            <input type="range" id="damping" min="100" max="1000" step="10" value="500">
+                            <span id="damping-value">500</span>
+                        </div>
+                        <button id="run-simulation" class="btn btn-primary btn-large">运行仿真</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>📈 灵敏度分析</h2>
+                    <div class="analysis-controls">
+                        <select id="analysis-type">
+                            <option value="magnitude">震级灵敏度</option>
+                            <option value="distance">距离灵敏度</option>
+                            <option value="2d">二维灵敏度</option>
+                            <option value="detection_range">检测范围</option>
+                            <option value="optimize">参数优化</option>
+                        </select>
+                        <button id="run-analysis" class="btn btn-primary">开始分析</button>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="sensitivity-chart"></canvas>
+                    </div>
+                    <div id="analysis-result" class="analysis-result"></div>
+                </div>
+
+                <div class="card">
+                    <h2>⚠️ 告警信息</h2>
+                    <div class="alerts-container">
+                        <div id="alerts-list" class="alerts-list">
+                            <div class="alert-empty">暂无告警信息</div>
+                        </div>
+                        <button id="refresh-alerts" class="btn btn-secondary">刷新告警</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>📋 系统状态</h2>
+                    <div class="system-stats">
+                        <div class="stat-row">
+                            <span class="stat-label">HTTP请求数</span>
+                            <span id="stat-requests" class="stat-value">0</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">平均响应时间</span>
+                            <span id="stat-response-time" class="stat-value">0ms</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">检测概率</span>
+                            <span id="stat-detection" class="stat-value">--</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">误报率</span>
+                            <span id="stat-false-alarm" class="stat-value">--</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">灵敏度评分</span>
+                            <span id="stat-sensitivity" class="stat-value">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>📁 历史数据</h2>
+                    <div class="history-controls">
+                        <button id="load-history" class="btn btn-secondary">加载历史数据</button>
+                        <span id="history-count" class="history-count">0 条记录</span>
+                    </div>
+                    <div class="history-chart">
+                        <canvas id="history-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <p>古代地动仪都柱地震响应仿真与灵敏度分析系统 | 张衡地动仪复原研究 © 2026</p>
+        </footer>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/waveform.js"></script>
+    <script src="js/seismograph3d.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>

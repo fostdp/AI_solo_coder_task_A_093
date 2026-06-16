@@ -1,0 +1,62 @@
+{
+    "server": {
+        "udp_port": 8888,
+        "http_port": 8080,
+        "device_id": "device_001",
+        "data_format": "json",
+        "auto_sensitivity_analysis": true,
+        "sensitivity_analysis_interval": 300
+    },
+    "clickhouse": {
+        "host": "localhost",
+        "port": 8123,
+        "database": "seismograph",
+        "username": "default",
+        "password": "",
+        "batch_size": 100,
+        "flush_interval": 5
+    },
+    "mqtt": {
+        "host": "localhost",
+        "port": 1883,
+        "topic": "seismograph/alerts",
+        "client_id": "seismograph_backend",
+        "username": "",
+        "password": "",
+        "qos": 1
+    },
+    "simulation": {
+        "column_mass": 100.0,
+        "column_height": 2.5,
+        "column_radius": 0.2,
+        "default_stiffness": 50000.0,
+        "default_damping": 500.0,
+        "trigger_threshold": 0.05,
+        "trigger_angle_threshold": 0.05,
+        "friction_coefficient": 0.1,
+        "gravity": 9.81
+    },
+    "sensitivity": {
+        "min_magnitude": 3.0,
+        "max_magnitude": 8.0,
+        "min_distance": 10.0,
+        "max_distance": 500.0,
+        "num_magnitude_samples": 11,
+        "num_distance_samples": 11,
+        "monte_carlo_samples": 100,
+        "false_trigger_magnitude_threshold": 3.0,
+        "sensitivity_decline_threshold": 0.7
+    },
+    "alert": {
+        "false_trigger_cooldown": 60,
+        "sensitivity_check_interval": 300,
+        "min_triggers_for_sensitivity_check": 10,
+        "sensitivity_decline_threshold": 0.3
+    },
+    "logging": {
+        "level": "info",
+        "log_file": "logs/seismograph.log",
+        "max_log_size": 10485760,
+        "max_log_files": 5
+    }
+}
