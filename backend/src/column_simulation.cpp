@@ -6,7 +6,8 @@
 namespace seismograph {
 
 ColumnSimulation::ColumnSimulation()
-    : rng_(std::random_device{}()) {
+    : rng_(std::random_device{}()),
+      soil_type_(SoilType::SOIL_MEDIUM) {
     column_params_.mass = 1000.0;
     column_params_.height = 2.5;
     column_params_.base_radius = 0.3;
@@ -18,6 +19,45 @@ ColumnSimulation::ColumnSimulation()
     column_params_.dynamic_friction = 0.4;
     column_params_.trigger_threshold = 0.05;
     reset();
+}
+
+void ColumnSimulation::set_soil_type(SoilType type) {
+    soil_type_ = type;
+}
+
+ColumnSimulation::SoilType ColumnSimulation::get_soil_type() const {
+    return soil_type_;
+}
+
+double ColumnSimulation::calculate_soil_amplification(double frequency) const {
+    struct SoilParams {
+        double Tg;
+        double Amax;
+        double k;
+    };
+
+    static const SoilParams soil_params[] = {
+        {0.20, 0.90, 0.95},
+        {0.35, 1.00, 1.00},
+        {0.45, 1.10, 1.05},
+        {0.65, 1.20, 1.10}
+    };
+
+    const SoilParams& sp = soil_params[static_cast<int>(soil_type_)];
+    double T = 1.0 / std::max(frequency, 0.1);
+    double amp;
+
+    if (T < 0.1) {
+        amp = 0.45 + 5.5 * (T - 0.1);
+    } else if (T < sp.Tg) {
+        amp = sp.Amax;
+    } else if (T < 5.0) {
+        amp = sp.Amax * std::pow(sp.Tg / T, 0.9);
+    } else {
+        amp = sp.Amax * std::pow(sp.Tg / 5.0, 0.9) * (5.0 / T);
+    }
+
+    return amp * sp.k;
 }
 
 void ColumnSimulation::set_column_params(const ColumnParams& params) {
@@ -45,7 +85,15 @@ void ColumnSimulation::reset() {
 double ColumnSimulation::calculate_seismic_acceleration(double magnitude, double distance, double time) {
     double amplitude = calculate_wave_amplitude(magnitude, distance);
     double wave = generate_seismic_wave(time, magnitude, distance);
-    return amplitude * wave;
+
+    double freq_p = 5.0;
+    double freq_s = 3.0;
+    double freq_r = 1.5;
+    double weighted_amp = (0.3 * calculate_soil_amplification(freq_p)
+                         + 0.5 * calculate_soil_amplification(freq_s)
+                         + 0.2 * calculate_soil_amplification(freq_r));
+
+    return amplitude * wave * weighted_amp;
 }
 
 double ColumnSimulation::calculate_wave_amplitude(double magnitude, double distance) {
@@ -114,62 +162,100 @@ void ColumnSimulation::update_dynamics(double seismic_accel_x, double seismic_ac
     double& c = column_params_.damping_coefficient;
     double& I = column_params_.moment_of_inertia;
     double& h = column_params_.height;
-    double& g = 9.81;
-    
+    double g = 9.81;
+
+    double omega_n = std::sqrt(k / m);
+    double max_disp = column_params_.base_radius * 0.8;
+    double max_angle = std::atan2(column_params_.base_radius, h);
+    double k_penalty = k * 100.0;
+    double c_penalty = c * 10.0;
+    double alpha_rayleigh = 0.02;
+    double beta_rayleigh = 0.001;
+
     double inertia_force_x = m * seismic_accel_x;
     double inertia_force_y = m * seismic_accel_y;
     double inertia_force_z = m * seismic_accel_z;
-    
+
     double restoring_force_x = calculate_restoring_force(state_disp_x_, k);
     double restoring_force_y = calculate_restoring_force(state_disp_y_, k);
     double restoring_force_z = calculate_restoring_force(state_disp_z_, k * 0.5);
-    
+
     double damping_force_x = calculate_damping_force(state_vel_x_, c);
     double damping_force_y = calculate_damping_force(state_vel_y_, c);
     double damping_force_z = calculate_damping_force(state_vel_z_, c * 0.5);
-    
-    double normal_force = m * g + inertia_force_z;
-    double friction_force_x = calculate_friction_force(state_vel_x_, normal_force);
-    double friction_force_y = calculate_friction_force(state_vel_y_, normal_force);
-    
-    double net_force_x = inertia_force_x - restoring_force_x - damping_force_x - friction_force_x;
-    double net_force_y = inertia_force_y - restoring_force_y - damping_force_y - friction_force_y;
-    double net_force_z = inertia_force_z - restoring_force_z - damping_force_z;
-    
+
+    double rayleigh_force_x = calculate_rayleigh_damping(
+        alpha_rayleigh, beta_rayleigh, state_vel_x_, state_disp_x_, omega_n);
+    double rayleigh_force_y = calculate_rayleigh_damping(
+        alpha_rayleigh, beta_rayleigh, state_vel_y_, state_disp_y_, omega_n);
+    double rayleigh_force_z = calculate_rayleigh_damping(
+        alpha_rayleigh, beta_rayleigh, state_vel_z_, state_disp_z_, omega_n);
+
+    double normal_force = std::max(m * g + inertia_force_z, 0.0);
+    double friction_force_x = calculate_stribeck_friction(state_vel_x_, normal_force);
+    double friction_force_y = calculate_stribeck_friction(state_vel_y_, normal_force);
+
+    double penalty_x = calculate_penalty_force(state_disp_x_, max_disp, k_penalty, c_penalty, state_vel_x_);
+    double penalty_y = calculate_penalty_force(state_disp_y_, max_disp, k_penalty, c_penalty, state_vel_y_);
+    double penalty_z = calculate_penalty_force(state_disp_z_, max_disp * 0.5, k_penalty, c_penalty, state_vel_z_);
+
+    double net_force_x = inertia_force_x - restoring_force_x - damping_force_x
+                        - friction_force_x - rayleigh_force_x + penalty_x;
+    double net_force_y = inertia_force_y - restoring_force_y - damping_force_y
+                        - friction_force_y - rayleigh_force_y + penalty_y;
+    double net_force_z = inertia_force_z - restoring_force_z - damping_force_z
+                        - rayleigh_force_z + penalty_z;
+
     double accel_x = net_force_x / m;
     double accel_y = net_force_y / m;
     double accel_z = net_force_z / m;
-    
-    double gravity_torque_x = m * g * h * state_angle_x_;
-    double gravity_torque_y = m * g * h * state_angle_y_;
-    
-    double inertia_torque_x = inertia_force_y * h * 0.5;
-    double inertia_torque_y = -inertia_force_x * h * 0.5;
-    
-    double damping_torque_x = c * h * h * state_ang_vel_x_;
-    double damping_torque_y = c * h * h * state_ang_vel_y_;
-    
-    double net_torque_x = inertia_torque_x - gravity_torque_x - damping_torque_x;
-    double net_torque_y = inertia_torque_y - gravity_torque_y - damping_torque_y;
-    
-    double ang_accel_x = net_torque_x / I;
-    double ang_accel_y = net_torque_y / I;
-    
+
     state_vel_x_ += accel_x * dt;
     state_vel_y_ += accel_y * dt;
     state_vel_z_ += accel_z * dt;
     state_disp_x_ += state_vel_x_ * dt;
     state_disp_y_ += state_vel_y_ * dt;
     state_disp_z_ += state_vel_z_ * dt;
-    
+
+    double gravity_torque_x = m * g * h * state_angle_x_;
+    double gravity_torque_y = m * g * h * state_angle_y_;
+
+    double inertia_torque_x = inertia_force_y * h * 0.5;
+    double inertia_torque_y = -inertia_force_x * h * 0.5;
+
+    double damping_torque_x = c * h * h * state_ang_vel_x_;
+    double damping_torque_y = c * h * h * state_ang_vel_y_;
+
+    double rayleigh_torque_x = calculate_rayleigh_damping(
+        alpha_rayleigh, beta_rayleigh, state_ang_vel_x_, state_angle_x_, omega_n);
+    double rayleigh_torque_y = calculate_rayleigh_damping(
+        alpha_rayleigh, beta_rayleigh, state_ang_vel_y_, state_angle_y_, omega_n);
+
+    double penalty_angle_x = calculate_penalty_force(state_angle_x_, max_angle, k_penalty * h * h, c_penalty * h * h, state_ang_vel_x_);
+    double penalty_angle_y = calculate_penalty_force(state_angle_y_, max_angle, k_penalty * h * h, c_penalty * h * h, state_ang_vel_y_);
+
+    double net_torque_x = inertia_torque_x - gravity_torque_x - damping_torque_x
+                         - rayleigh_torque_x + penalty_angle_x;
+    double net_torque_y = inertia_torque_y - gravity_torque_y - damping_torque_y
+                         - rayleigh_torque_y + penalty_angle_y;
+
+    double ang_accel_x = net_torque_x / I;
+    double ang_accel_y = net_torque_y / I;
+
     state_ang_vel_x_ += ang_accel_x * dt;
     state_ang_vel_y_ += ang_accel_y * dt;
     state_angle_x_ += state_ang_vel_x_ * dt;
     state_angle_y_ += state_ang_vel_y_ * dt;
-    
-    double max_angle = std::atan2(column_params_.base_radius, h);
-    state_angle_x_ = std::clamp(state_angle_x_, -max_angle, max_angle);
-    state_angle_y_ = std::clamp(state_angle_y_, -max_angle, max_angle);
+
+    double soft_limit = max_angle * 0.999;
+    if (std::abs(state_angle_x_) > soft_limit) {
+        state_angle_x_ = std::copysign(soft_limit, state_angle_x_);
+        state_ang_vel_x_ *= 0.1;
+    }
+    if (std::abs(state_angle_y_) > soft_limit) {
+        state_angle_y_ = std::copysign(soft_limit, state_angle_y_);
+        state_ang_vel_y_ *= 0.1;
+    }
 }
 
 int ColumnSimulation::determine_trigger_direction(double angle_x, double angle_y) {
@@ -207,13 +293,67 @@ double ColumnSimulation::calculate_damping_force(double velocity, double damping
 }
 
 double ColumnSimulation::calculate_friction_force(double velocity, double normal_force) {
-    double friction_force;
-    if (std::abs(velocity) < 0.001) {
-        friction_force = column_params_.static_friction * normal_force * std::tanh(velocity * 1000.0);
+    return calculate_stribeck_friction(velocity, normal_force);
+}
+
+double ColumnSimulation::calculate_stribeck_friction(double velocity, double normal_force) {
+    const double mu_s = column_params_.static_friction;
+    const double mu_d = column_params_.dynamic_friction;
+    const double v_s = 0.001;
+    const double v_c = 0.01;
+    const double sigma = 0.0001;
+
+    double mu_eff;
+    double v_abs = std::abs(velocity);
+
+    if (v_abs < v_s) {
+        double alpha = v_abs / v_s;
+        mu_eff = mu_d + (mu_s - mu_d) * (1.0 - alpha * alpha * (3.0 - 2.0 * alpha));
+    } else if (v_abs < v_c) {
+        double t = (v_abs - v_s) / (v_c - v_s);
+        mu_eff = mu_s + (mu_d - mu_s) * t * t * (3.0 - 2.0 * t);
     } else {
-        friction_force = column_params_.dynamic_friction * normal_force * std::tanh(velocity * 10.0);
+        mu_eff = mu_d * (1.0 + sigma / v_abs);
     }
-    return friction_force;
+
+    double smooth_sign = std::tanh(velocity / (v_s * 0.5));
+    return mu_eff * normal_force * smooth_sign;
+}
+
+double ColumnSimulation::calculate_penalty_force(double displacement, double boundary,
+                                                  double penalty_stiffness, double penalty_damping,
+                                                  double velocity) {
+    double force = 0.0;
+    double penetration = 0.0;
+
+    if (displacement > boundary) {
+        penetration = displacement - boundary;
+    } else if (displacement < -boundary) {
+        penetration = -displacement - boundary;
+    }
+
+    if (penetration > 0.0) {
+        double k_p = penalty_stiffness;
+        double c_p = penalty_damping;
+        double penalty = k_p * penetration * penetration + c_p * std::abs(velocity) * penetration;
+
+        if (displacement > 0) {
+            force = -penalty;
+        } else {
+            force = penalty;
+        }
+    }
+
+    return force;
+}
+
+double ColumnSimulation::calculate_rayleigh_damping(double stiffness_ratio, double mass_ratio,
+                                                     double velocity, double displacement,
+                                                     double natural_frequency) {
+    double omega_n = natural_frequency > 0 ? natural_frequency : 1.0;
+    double alpha = 2.0 * stiffness_ratio * omega_n;
+    double beta = 2.0 * mass_ratio / omega_n;
+    return alpha * displacement + beta * velocity;
 }
 
 bool ColumnSimulation::check_static_equilibrium() {
@@ -230,6 +370,7 @@ double ColumnSimulation::calculate_stability_margin() {
 
 SimulationResult ColumnSimulation::simulate(const SeismicWaveParams& wave_params, double dt) {
     SimulationResult result;
+    set_soil_type(wave_params.soil_type);
     reset();
     
     double duration = wave_params.duration > 0 ? wave_params.duration : 10.0;
@@ -292,6 +433,7 @@ std::vector<std::pair<double, SimulationResult>> ColumnSimulation::simulate_time
     const SeismicWaveParams& wave_params, double duration, double dt) {
     
     std::vector<std::pair<double, SimulationResult>> timeseries;
+    set_soil_type(wave_params.soil_type);
     reset();
     
     double time = 0.0;

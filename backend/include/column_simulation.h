@@ -25,10 +25,15 @@ public:
     double calculate_wave_amplitude(double magnitude, double distance);
     double calculate_response_spectrum(double frequency, double damping);
     
+    void set_soil_type(SoilType type);
+    SoilType get_soil_type() const;
+    double calculate_soil_amplification(double frequency) const;
+
     void reset();
 
 private:
     ColumnParams column_params_;
+    SoilType soil_type_;
     
     double state_disp_x_;
     double state_disp_y_;
@@ -54,6 +59,13 @@ private:
     double calculate_restoring_force(double displacement, double stiffness);
     double calculate_damping_force(double velocity, double damping);
     double calculate_friction_force(double velocity, double normal_force);
+    double calculate_stribeck_friction(double velocity, double normal_force);
+    double calculate_penalty_force(double displacement, double boundary, 
+                                    double penalty_stiffness, double penalty_damping,
+                                    double velocity);
+    double calculate_rayleigh_damping(double stiffness_ratio, double mass_ratio,
+                                      double velocity, double displacement,
+                                      double natural_frequency);
     
     double generate_seismic_wave(double time, double magnitude, double distance);
     double generate_p_wave(double time, double distance);

@@ -14,7 +14,8 @@ void SensitivityAnalysis::set_column_simulation(ColumnSimulation* simulation) {
     simulation_ = simulation;
 }
 
-bool SensitivityAnalysis::run_single_trial(double magnitude, double distance, 
+bool SensitivityAnalysis::run_single_trial(double magnitude, double distance,
+                                          SoilType soil_type,
                                           SimulationResult& result) {
     if (!simulation_) return false;
     
@@ -24,6 +25,7 @@ bool SensitivityAnalysis::run_single_trial(double magnitude, double distance,
     params.depth = 10.0;
     params.frequency = 2.0;
     params.duration = 10.0;
+    params.soil_type = soil_type;
     
     result = simulation_->simulate(params, 0.001);
     return true;
@@ -134,10 +136,21 @@ SensitivityAnalysis::DetectionMetrics SensitivityAnalysis::calculate_metrics(
 
 std::vector<SensitivityResult> SensitivityAnalysis::analyze_magnitude_sensitivity(
     double min_magnitude, double max_magnitude, int steps,
-    double fixed_distance, int num_trials) {
+    double fixed_distance, SoilType soil_type, int num_trials) {
     
     std::vector<SensitivityResult> results;
     double mag_step = (max_magnitude - min_magnitude) / (steps - 1);
+
+    if (simulation_) {
+        simulation_->set_soil_type(static_cast<ColumnSimulation::SoilType>(soil_type));
+    }
+
+    double amp_ref = 0.0;
+    if (simulation_) {
+        amp_ref = (0.3 * simulation_->calculate_soil_amplification(5.0)
+                 + 0.5 * simulation_->calculate_soil_amplification(3.0)
+                 + 0.2 * simulation_->calculate_soil_amplification(1.5));
+    }
     
     for (int i = 0; i < steps; ++i) {
         double magnitude = min_magnitude + i * mag_step;
@@ -145,7 +158,7 @@ std::vector<SensitivityResult> SensitivityAnalysis::analyze_magnitude_sensitivit
         std::vector<SimulationResult> trials;
         for (int t = 0; t < num_trials; ++t) {
             SimulationResult result;
-            if (run_single_trial(magnitude, fixed_distance, result)) {
+            if (run_single_trial(magnitude, fixed_distance, soil_type, result)) {
                 trials.push_back(result);
             }
         }
@@ -155,12 +168,14 @@ std::vector<SensitivityResult> SensitivityAnalysis::analyze_magnitude_sensitivit
         SensitivityResult sr;
         sr.test_magnitude = magnitude;
         sr.test_distance = fixed_distance;
+        sr.soil_type = soil_type;
         sr.detection_probability = metrics.detection_probability;
         sr.false_alarm_rate = metrics.false_alarm_rate;
         sr.response_time_ms = metrics.mean_response_time;
         sr.trigger_direction = static_cast<int>(metrics.mean_trigger_direction);
         sr.column_stiffness = simulation_ ? simulation_->get_column_params().stiffness : 0.0;
         sr.damping_coefficient = simulation_ ? simulation_->get_column_params().damping_coefficient : 0.0;
+        sr.soil_amplification_factor = amp_ref;
         
         results.push_back(sr);
     }
@@ -170,10 +185,21 @@ std::vector<SensitivityResult> SensitivityAnalysis::analyze_magnitude_sensitivit
 
 std::vector<SensitivityResult> SensitivityAnalysis::analyze_distance_sensitivity(
     double min_distance, double max_distance, int steps,
-    double fixed_magnitude, int num_trials) {
+    double fixed_magnitude, SoilType soil_type, int num_trials) {
     
     std::vector<SensitivityResult> results;
     double dist_step = (max_distance - min_distance) / (steps - 1);
+
+    if (simulation_) {
+        simulation_->set_soil_type(static_cast<ColumnSimulation::SoilType>(soil_type));
+    }
+
+    double amp_ref = 0.0;
+    if (simulation_) {
+        amp_ref = (0.3 * simulation_->calculate_soil_amplification(5.0)
+                 + 0.5 * simulation_->calculate_soil_amplification(3.0)
+                 + 0.2 * simulation_->calculate_soil_amplification(1.5));
+    }
     
     for (int i = 0; i < steps; ++i) {
         double distance = min_distance + i * dist_step;
@@ -181,7 +207,7 @@ std::vector<SensitivityResult> SensitivityAnalysis::analyze_distance_sensitivity
         std::vector<SimulationResult> trials;
         for (int t = 0; t < num_trials; ++t) {
             SimulationResult result;
-            if (run_single_trial(fixed_magnitude, distance, result)) {
+            if (run_single_trial(fixed_magnitude, distance, soil_type, result)) {
                 trials.push_back(result);
             }
         }
@@ -191,12 +217,14 @@ std::vector<SensitivityResult> SensitivityAnalysis::analyze_distance_sensitivity
         SensitivityResult sr;
         sr.test_magnitude = fixed_magnitude;
         sr.test_distance = distance;
+        sr.soil_type = soil_type;
         sr.detection_probability = metrics.detection_probability;
         sr.false_alarm_rate = metrics.false_alarm_rate;
         sr.response_time_ms = metrics.mean_response_time;
         sr.trigger_direction = static_cast<int>(metrics.mean_trigger_direction);
         sr.column_stiffness = simulation_ ? simulation_->get_column_params().stiffness : 0.0;
         sr.damping_coefficient = simulation_ ? simulation_->get_column_params().damping_coefficient : 0.0;
+        sr.soil_amplification_factor = amp_ref;
         
         results.push_back(sr);
     }
@@ -207,11 +235,22 @@ std::vector<SensitivityResult> SensitivityAnalysis::analyze_distance_sensitivity
 std::vector<std::vector<SensitivityResult>> SensitivityAnalysis::analyze_2d_sensitivity(
     double min_magnitude, double max_magnitude, int mag_steps,
     double min_distance, double max_distance, int dist_steps,
-    int num_trials) {
+    SoilType soil_type, int num_trials) {
     
     std::vector<std::vector<SensitivityResult>> results;
     double mag_step = (max_magnitude - min_magnitude) / (mag_steps - 1);
     double dist_step = (max_distance - min_distance) / (dist_steps - 1);
+
+    if (simulation_) {
+        simulation_->set_soil_type(static_cast<ColumnSimulation::SoilType>(soil_type));
+    }
+
+    double amp_ref = 0.0;
+    if (simulation_) {
+        amp_ref = (0.3 * simulation_->calculate_soil_amplification(5.0)
+                 + 0.5 * simulation_->calculate_soil_amplification(3.0)
+                 + 0.2 * simulation_->calculate_soil_amplification(1.5));
+    }
     
     for (int i = 0; i < mag_steps; ++i) {
         std::vector<SensitivityResult> row;
@@ -223,7 +262,7 @@ std::vector<std::vector<SensitivityResult>> SensitivityAnalysis::analyze_2d_sens
             std::vector<SimulationResult> trials;
             for (int t = 0; t < num_trials; ++t) {
                 SimulationResult result;
-                if (run_single_trial(magnitude, distance, result)) {
+                if (run_single_trial(magnitude, distance, soil_type, result)) {
                     trials.push_back(result);
                 }
             }
@@ -233,12 +272,14 @@ std::vector<std::vector<SensitivityResult>> SensitivityAnalysis::analyze_2d_sens
             SensitivityResult sr;
             sr.test_magnitude = magnitude;
             sr.test_distance = distance;
+            sr.soil_type = soil_type;
             sr.detection_probability = metrics.detection_probability;
             sr.false_alarm_rate = metrics.false_alarm_rate;
             sr.response_time_ms = metrics.mean_response_time;
             sr.trigger_direction = static_cast<int>(metrics.mean_trigger_direction);
             sr.column_stiffness = simulation_ ? simulation_->get_column_params().stiffness : 0.0;
             sr.damping_coefficient = simulation_ ? simulation_->get_column_params().damping_coefficient : 0.0;
+            sr.soil_amplification_factor = amp_ref;
             
             row.push_back(sr);
         }
@@ -253,7 +294,7 @@ std::vector<SensitivityResult> SensitivityAnalysis::analyze_parameter_sensitivit
     const std::string& param_name,
     double min_val, double max_val, int steps,
     double fixed_magnitude, double fixed_distance,
-    int num_trials) {
+    SoilType soil_type, int num_trials) {
     
     std::vector<SensitivityResult> results;
     double step = (max_val - min_val) / (steps - 1);
@@ -289,7 +330,7 @@ std::vector<SensitivityResult> SensitivityAnalysis::analyze_parameter_sensitivit
         std::vector<SimulationResult> trials;
         for (int t = 0; t < num_trials; ++t) {
             SimulationResult result;
-            if (run_single_trial(fixed_magnitude, fixed_distance, result)) {
+            if (run_single_trial(fixed_magnitude, fixed_distance, soil_type, result)) {
                 trials.push_back(result);
             }
         }
@@ -299,6 +340,7 @@ std::vector<SensitivityResult> SensitivityAnalysis::analyze_parameter_sensitivit
         SensitivityResult sr;
         sr.test_magnitude = fixed_magnitude;
         sr.test_distance = fixed_distance;
+        sr.soil_type = soil_type;
         sr.detection_probability = metrics.detection_probability;
         sr.false_alarm_rate = metrics.false_alarm_rate;
         sr.response_time_ms = metrics.mean_response_time;
@@ -325,7 +367,8 @@ SensitivityAnalysis::DetectionRange SensitivityAnalysis::calculate_detection_ran
     range.min_distance = 1000.0;
     range.max_distance = 0.0;
     
-    auto mag_results = analyze_magnitude_sensitivity(2.0, 8.0, 13, 50.0, 50);
+    SoilType default_soil = SoilType::SOIL_MEDIUM;
+    auto mag_results = analyze_magnitude_sensitivity(2.0, 8.0, 13, 50.0, default_soil, 50);
     
     for (const auto& result : mag_results) {
         if (result.detection_probability >= detection_threshold && 
@@ -335,7 +378,7 @@ SensitivityAnalysis::DetectionRange SensitivityAnalysis::calculate_detection_ran
         }
     }
     
-    auto dist_results = analyze_distance_sensitivity(10.0, 500.0, 50, 5.0, 50);
+    auto dist_results = analyze_distance_sensitivity(10.0, 500.0, 50, 5.0, default_soil, 50);
     
     for (const auto& result : dist_results) {
         if (result.detection_probability >= detection_threshold && 
@@ -375,10 +418,11 @@ SensitivityAnalysis::OptimalParams SensitivityAnalysis::optimize_parameters(
         
         simulation_->set_column_params(params);
         
+        SoilType default_soil = SoilType::SOIL_MEDIUM;
         std::vector<SimulationResult> trials;
         for (int t = 0; t < 20; ++t) {
             SimulationResult result;
-            if (run_single_trial(target_magnitude, target_distance, result)) {
+            if (run_single_trial(target_magnitude, target_distance, default_soil, result)) {
                 trials.push_back(result);
             }
         }

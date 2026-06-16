@@ -24,12 +24,20 @@ struct SensorData {
     int32_t trigger_direction;
 };
 
+enum class SoilType {
+    ROCK_HARD = 0,
+    SOIL_MEDIUM = 1,
+    SOIL_SOFT = 2,
+    SOIL_VERY_SOFT = 3
+};
+
 struct SeismicWaveParams {
     double magnitude;
     double epicenter_distance;
     double depth;
     double frequency;
     double duration;
+    SoilType soil_type;
 };
 
 struct ColumnParams {
@@ -65,12 +73,14 @@ struct SimulationResult {
 struct SensitivityResult {
     double test_magnitude;
     double test_distance;
+    SoilType soil_type;
     double detection_probability;
     double false_alarm_rate;
     double response_time_ms;
     int trigger_direction;
     double column_stiffness;
     double damping_coefficient;
+    double soil_amplification_factor;
 };
 
 struct Alert {

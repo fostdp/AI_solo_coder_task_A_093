@@ -345,19 +345,95 @@ class SeismographApp {
         }
     }
 
+    catmullRom(p0, p1, p2, p3, t) {
+        const t2 = t * t;
+        const t3 = t2 * t;
+        return 0.5 * ((2.0 * p1)
+            + (-p0 + p2) * t
+            + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+            + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3);
+    }
+
+    interpolateFrame(rawData, index, alpha) {
+        const n = rawData.length;
+        const get = (i) => {
+            const idx = Math.max(0, Math.min(n - 1, i));
+            const d = rawData[idx];
+            return d[1] || d;
+        };
+
+        const f0 = get(index - 1);
+        const f1 = get(index);
+        const f2 = get(index + 1);
+        const f3 = get(index + 2);
+
+        const channel = (key) => this.catmullRom(
+            f0[key] || 0, f1[key] || 0, f2[key] || 0, f3[key] || 0, alpha
+        );
+
+        const interp = {
+            column_displacement_x: channel('displacement_x') || channel('column_displacement_x'),
+            column_displacement_y: channel('displacement_y') || channel('column_displacement_y'),
+            column_displacement_z: channel('displacement_z') || channel('column_displacement_z'),
+            column_angle_x: channel('angle_x') || channel('column_angle_x'),
+            column_angle_y: channel('angle_y') || channel('column_angle_y'),
+            seismic_accel_x: f2.seismic_accel_x || f2.x || 0,
+            seismic_accel_y: f2.seismic_accel_y || f2.y || 0,
+            seismic_accel_z: f2.seismic_accel_z || f2.z || 0,
+            is_triggered: f2.is_triggered || false,
+            dragon_triggers: f2.dragon_triggers || [0, 0, 0, 0, 0, 0, 0, 0],
+        };
+        return interp;
+    }
+
     playSimulationTimeseries(timeseries) {
+        if (!timeseries || timeseries.length < 2) {
+            this.isSimulationRunning = false;
+            return;
+        }
+
         this.simulationData = timeseries;
-        this.currentSimIndex = 0;
         this.waveform.clear();
 
-        const playStep = () => {
-            if (this.currentSimIndex >= this.simulationData.length) {
+        if (this._simRAF) {
+            cancelAnimationFrame(this._simRAF);
+            this._simRAF = null;
+        }
+
+        const rawData = timeseries;
+        const totalFrames = rawData.length;
+        const sampleDt = (rawData[1][0] || rawData[1].time || 0.001) - (rawData[0][0] || rawData[0].time || 0);
+        const playbackSpeed = 1.0;
+
+        let currentSimTime = 0;
+        let lastFrameTime = performance.now();
+
+        const render = (now) => {
+            const realDt = (now - lastFrameTime) / 1000.0;
+            lastFrameTime = now;
+            currentSimTime += realDt * playbackSpeed;
+
+            const simIndexFloat = currentSimTime / Math.max(sampleDt, 1e-6);
+
+            if (simIndexFloat >= totalFrames - 2) {
                 this.isSimulationRunning = false;
+                const last = rawData[totalFrames - 1];
+                const lastData = last[1] || last;
+                this.waveform.update({
+                    x: lastData.seismic_accel_x || 0,
+                    y: lastData.seismic_accel_y || 0,
+                    z: lastData.seismic_accel_z || 0,
+                });
+                this.updateSensorDisplay(lastData);
+                this._simRAF = null;
                 return;
             }
 
-            const frame = this.simulationData[this.currentSimIndex];
-            
+            const idx = Math.floor(simIndexFloat);
+            const alpha = simIndexFloat - idx;
+
+            const frame = this.interpolateFrame(rawData, idx, alpha);
+
             this.waveform.update({
                 x: frame.seismic_accel_x || 0,
                 y: frame.seismic_accel_y || 0,
@@ -366,11 +442,10 @@ class SeismographApp {
 
             this.updateSensorDisplay(frame);
 
-            this.currentSimIndex++;
-            setTimeout(playStep, 20);
+            this._simRAF = requestAnimationFrame(render);
         };
 
-        playStep();
+        this._simRAF = requestAnimationFrame(render);
     }
 
     async runSensitivityAnalysis() {
@@ -565,6 +640,7 @@ class SeismographApp {
         if (this.alertPollingInterval) clearInterval(this.alertPollingInterval);
         if (this.statsPollingInterval) clearInterval(this.statsPollingInterval);
         if (this.simulationInterval) clearInterval(this.simulationInterval);
+        if (this._simRAF) cancelAnimationFrame(this._simRAF);
         
         if (this.waveform) this.waveform.stop();
         if (this.seismograph3d) this.seismograph3d.dispose();

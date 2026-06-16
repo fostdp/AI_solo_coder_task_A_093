@@ -15,25 +15,25 @@ public:
     
     std::vector<SensitivityResult> analyze_magnitude_sensitivity(
         double min_magnitude, double max_magnitude, int steps,
-        double fixed_distance, int num_trials = 100
+        double fixed_distance, SoilType soil_type, int num_trials = 100
     );
     
     std::vector<SensitivityResult> analyze_distance_sensitivity(
         double min_distance, double max_distance, int steps,
-        double fixed_magnitude, int num_trials = 100
+        double fixed_magnitude, SoilType soil_type, int num_trials = 100
     );
     
     std::vector<std::vector<SensitivityResult>> analyze_2d_sensitivity(
         double min_magnitude, double max_magnitude, int mag_steps,
         double min_distance, double max_distance, int dist_steps,
-        int num_trials = 50
+        SoilType soil_type, int num_trials = 50
     );
     
     std::vector<SensitivityResult> analyze_parameter_sensitivity(
         const std::string& param_name,
         double min_val, double max_val, int steps,
         double fixed_magnitude, double fixed_distance,
-        int num_trials = 100
+        SoilType soil_type, int num_trials = 100
     );
     
     struct DetectionMetrics {
