@@ -1,0 +1,33 @@
+# =====================================================
+# Grafana - ClickHouse 数据源自动配置
+# =====================================================
+
+apiVersion: 1
+
+datasources:
+  - name: ClickHouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    url: http://clickhouse:8123
+    isDefault: false
+    editable: true
+    jsonData:
+      defaultDatabase: seismograph
+      protocol: http
+      port: 8123
+      server: clickhouse
+      username: default
+      defaultTable: sensor_data
+      tlsSkipVerify: true
+    secureJsonData:
+      password: ""
+
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST

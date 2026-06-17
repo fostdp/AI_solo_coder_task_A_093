@@ -1,0 +1,45 @@
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  scrape_timeout:      10s
+
+  external_labels:
+    cluster: 'seismograph-production'
+    environment: 'prod'
+
+rule_files:
+  # - "seismograph_alerts.yml"
+
+scrape_configs:
+
+  - job_name: 'seismograph-backend'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['backend:8080']
+        labels:
+          service: 'seismograph-backend'
+          role: 'simulation'
+
+  - job_name: 'clickhouse'
+    static_configs:
+      - targets: ['clickhouse:9363']
+        labels:
+          service: 'clickhouse'
+    # ClickHouse 自身 9363 是 prometheus 端口 (clickhouse_exporter)
+    # 如果没有 exporter, 可以改为:
+    # metrics_path: '/?query=select+*+from+system.metrics+FORMAT+Prometheus'
+    # static_configs:
+    #   - targets: ['clickhouse:8123']
+
+  - job_name: 'mqtt-exporter'
+    static_configs:
+      - targets: ['mqtt:9090']
+        labels:
+          service: 'mosquitto'
+    # 需配合 https://github.com/inovex/mqtt-blackbox-exporter 等使用
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'

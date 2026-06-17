@@ -96,6 +96,7 @@ private:
     HttpResponse api_run_simulation(const HttpRequest& request);
     HttpResponse api_run_sensitivity_analysis(const HttpRequest& request);
     HttpResponse api_get_stats(const HttpRequest& request);
+    HttpResponse api_get_metrics(const HttpRequest& request);
 };
 
 }

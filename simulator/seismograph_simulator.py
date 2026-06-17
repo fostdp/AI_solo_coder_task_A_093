@@ -12,7 +12,7 @@ from datetime import datetime
 import struct
 
 class SeismicWaveGenerator:
-    def __init__(self, base_magnitude=0.0, base_distance=100.0):
+    def __init__(self, base_magnitude=0.0, base_distance=100.0, soil_type=1):
         self.base_magnitude = base_magnitude
         self.base_distance = base_distance
         self.time = 0.0
@@ -22,15 +22,33 @@ class SeismicWaveGenerator:
         self.earthquake_distance = 0.0
         self.earthquake_duration = 0.0
         self.earthquake_direction = 0.0
+        self.soil_type = soil_type
+
+    SOIL_AMPLIFICATION = {
+        0: 0.85,
+        1: 1.00,
+        2: 1.30,
+        3: 1.80
+    }
+    
+    def get_soil_amplification(self):
+        return self.SOIL_AMPLIFICATION.get(self.soil_type, 1.0)
         
-    def trigger_earthquake(self, magnitude, distance, duration=10.0):
+    def trigger_earthquake(self, magnitude, distance, duration=10.0, direction=None):
         self.earthquake_active = True
         self.earthquake_start_time = self.time
         self.earthquake_magnitude = magnitude
         self.earthquake_distance = distance
         self.earthquake_duration = duration
-        self.earthquake_direction = random.uniform(-math.pi, math.pi)
-        print(f"[模拟器] 触发地震: 震级={magnitude}, 距离={distance}km, 方向={math.degrees(self.earthquake_direction):.1f}°")
+        if direction is None:
+            self.earthquake_direction = random.uniform(-math.pi, math.pi)
+        else:
+            self.earthquake_direction = math.radians(direction) if abs(direction) > 2 * math.pi else direction
+        soil_name = {0: "I类坚硬岩", 1: "II类中硬土", 2: "III类软弱土", 3: "IV类极软土"}.get(
+            self.soil_type, f"未知({self.soil_type})")
+        print(f"[模拟器] 触发地震: 震级={magnitude}, 距离={distance}km, "
+              f"方向={math.degrees(self.earthquake_direction):.1f}°, 土壤={soil_name}, "
+              f"持续时间={duration}s, 放大系数={self.get_soil_amplification():.2f}")
         
     def generate_p_wave(self, t, distance):
         vp = 6.0
@@ -66,7 +84,8 @@ class SeismicWaveGenerator:
         a = 0.01 * (10 ** (0.5 * magnitude))
         attenuation = math.exp(-0.001 * distance)
         geometric_spreading = 1.0 / math.sqrt(distance + 1.0)
-        return a * attenuation * geometric_spreading
+        soil_amp = self.get_soil_amplification()
+        return a * attenuation * geometric_spreading * soil_amp
     
     def generate_seismic_acceleration(self, dt):
         self.time += dt
@@ -254,16 +273,23 @@ class ColumnDynamicsSimulator:
 
 class SeismographSimulator:
     def __init__(self, host='127.0.0.1', port=12345, device_id='device_001', 
-                 send_interval=60.0, protocol='json'):
+                 send_interval=60.0, protocol='json',
+                 soil_type=1, random_seed=None,
+                 noise_level=0.1):
         self.host = host
         self.port = port
         self.device_id = device_id
         self.send_interval = send_interval
         self.protocol = protocol
+        self.soil_type = soil_type
+        self.noise_level = noise_level
         
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.wave_generator = SeismicWaveGenerator()
+        self.wave_generator = SeismicWaveGenerator(soil_type=soil_type)
         self.column_simulator = ColumnDynamicsSimulator()
+        
+        if random_seed is not None:
+            random.seed(random_seed)
         
         self.running = False
         self.simulation_time = 0.0
@@ -373,10 +399,17 @@ class SeismographSimulator:
             print(f"[模拟器] 发送失败: {e}")
             return False
     
-    def trigger_random_earthquake(self):
-        magnitude = random.uniform(2.0, 7.0)
-        distance = random.uniform(10.0, 500.0)
-        duration = random.uniform(8.0, 15.0)
+    def trigger_random_earthquake(self, magnitude_range=None, distance_range=None, duration_range=None):
+        if magnitude_range is None:
+            magnitude_range = (2.0, 7.0)
+        if distance_range is None:
+            distance_range = (10.0, 500.0)
+        if duration_range is None:
+            duration_range = (8.0, 15.0)
+
+        magnitude = random.uniform(*magnitude_range)
+        distance = random.uniform(*distance_range)
+        duration = random.uniform(*duration_range)
         
         self.wave_generator.trigger_earthquake(magnitude, distance, duration)
         self.stats['earthquakes_triggered'] += 1
@@ -384,23 +417,45 @@ class SeismographSimulator:
         
         return magnitude, distance, duration
     
-    def run(self, auto_earthquake=True, earthquake_interval=300.0):
+    def run(self, auto_earthquake=True, earthquake_interval=300.0,
+            magnitude_range=None, distance_range=None, duration_range=None,
+            batch_count=None, stop_after_seconds=None):
         self.running = True
         self.stats['start_time'] = time.time()
         
+        soil_name = {0: "I类坚硬岩", 1: "II类中硬土", 2: "III类软弱土", 3: "IV类极软土"}.get(
+            self.soil_type, f"未知({self.soil_type})")
+        
         print(f"[模拟器] 启动: 目标={self.host}:{self.port}, 设备={self.device_id}")
         print(f"[模拟器] 上报间隔={self.send_interval}s, 协议={self.protocol}")
+        print(f"[模拟器] 土壤类型={soil_name}, 放大系数={self.wave_generator.get_soil_amplification():.2f}")
+        if magnitude_range:
+            print(f"[模拟器] 震级范围={magnitude_range}, 距离范围={distance_range}km")
+        if batch_count:
+            print(f"[模拟器] 批处理模式: 将触发 {batch_count} 次地震后退出")
+        if stop_after_seconds:
+            print(f"[模拟器] 将在 {stop_after_seconds} 秒后自动退出")
         
         last_send_time = time.time()
-        last_earthquake_time = time.time()
+        last_earthquake_time = time.time() - earthquake_interval
+        triggered_count = 0
         
         try:
             while self.running:
                 current_time = time.time()
                 
                 if auto_earthquake and current_time - last_earthquake_time > earthquake_interval:
-                    magnitude, distance, duration = self.trigger_random_earthquake()
-                    print(f"[模拟器] 自动触发地震: M{int(magnitude*10)/10}, {int(distance)}km")
+                    if batch_count is not None and triggered_count >= batch_count:
+                        print(f"[模拟器] 已完成 {batch_count} 次批处理地震触发")
+                        break
+                    
+                    magnitude, distance, duration = self.trigger_random_earthquake(
+                        magnitude_range, distance_range, duration_range)
+                    triggered_count += 1
+                    
+                    mag_str = f"{int(magnitude * 10) / 10}"
+                    dist_str = f"{int(distance)}"
+                    print(f"[模拟器] 自动触发地震 #{triggered_count}: M{mag_str}, {dist_str}km, 持续{duration:.1f}s")
                     last_earthquake_time = current_time
                 
                 data = self.generate_sensor_data()
@@ -408,7 +463,7 @@ class SeismographSimulator:
                 if current_time - last_send_time >= self.send_interval:
                     self.send_data(data)
                     
-                    magnitude_str = f"M{int(data['magnitude']*10)/10}"
+                    magnitude_str = f"M{int(data['magnitude'] * 10) / 10}"
                     status = "触发" if data['is_triggered'] else "正常"
                     direction = data['trigger_direction'] if data['is_triggered'] else "-"
                     
@@ -420,6 +475,10 @@ class SeismographSimulator:
                 
                 time.sleep(self.simulation_dt)
                 
+                if stop_after_seconds and (time.time() - self.stats['start_time']) > stop_after_seconds:
+                    print(f"[模拟器] 已运行 {stop_after_seconds}s，按设定退出")
+                    break
+                    
         except KeyboardInterrupt:
             print("\n[模拟器] 接收到停止信号")
         finally:
@@ -444,11 +503,26 @@ def main():
     parser.add_argument('--device-id', default='device_001', help='设备ID')
     parser.add_argument('--interval', type=float, default=60.0, help='上报间隔(秒)')
     parser.add_argument('--protocol', default='json', choices=['json', 'csv', 'binary'], help='数据协议')
+    
+    parser.add_argument('--soil', type=int, default=1, choices=[0, 1, 2, 3],
+                        help='场地土类型: 0=I类坚硬岩, 1=II类中硬土(默认), 2=III类软弱土, 3=IV类极软土')
+    parser.add_argument('--seed', type=int, default=None, help='随机数种子(复现实验)')
+    
     parser.add_argument('--no-auto-earthquake', action='store_true', help='禁用自动地震')
     parser.add_argument('--earthquake-interval', type=float, default=300.0, help='自动地震间隔(秒)')
     parser.add_argument('--magnitude', type=float, default=5.0, help='手动触发地震震级')
     parser.add_argument('--distance', type=float, default=50.0, help='手动触发地震距离(km)')
+    parser.add_argument('--duration', type=float, default=10.0, help='手动触发地震持续时间(秒)')
+    parser.add_argument('--direction', type=float, default=None, help='手动触发地震方向(角度, 0=正东)')
+    
+    parser.add_argument('--magnitude-min', type=float, default=2.0, help='随机震级下限')
+    parser.add_argument('--magnitude-max', type=float, default=7.0, help='随机震级上限')
+    parser.add_argument('--distance-min', type=float, default=10.0, help='随机震中距下限(km)')
+    parser.add_argument('--distance-max', type=float, default=500.0, help='随机震中距上限(km)')
+    
     parser.add_argument('--trigger-once', action='store_true', help='触发一次地震后退出')
+    parser.add_argument('--batch', type=int, default=None, help='批处理模式: 触发 N 次地震后退出')
+    parser.add_argument('--stop-after', type=float, default=None, help='运行 N 秒后自动退出')
     
     args = parser.parse_args()
     
@@ -457,17 +531,32 @@ def main():
         port=args.port,
         device_id=args.device_id,
         send_interval=args.interval,
-        protocol=args.protocol
+        protocol=args.protocol,
+        soil_type=args.soil,
+        random_seed=args.seed
     )
     
     if args.trigger_once:
-        simulator.wave_generator.trigger_earthquake(args.magnitude, args.distance, 10.0)
+        simulator.wave_generator.trigger_earthquake(
+            args.magnitude, args.distance, args.duration, args.direction)
         simulator.column_simulator.reset()
-        simulator.run(auto_earthquake=False)
+        simulator.run(auto_earthquake=False, stop_after_seconds=args.stop_after)
+    elif args.batch is not None:
+        simulator.run(
+            auto_earthquake=True,
+            earthquake_interval=max(5.0, args.earthquake_interval),
+            magnitude_range=(args.magnitude_min, args.magnitude_max),
+            distance_range=(args.distance_min, args.distance_max),
+            batch_count=args.batch,
+            stop_after_seconds=args.stop_after
+        )
     else:
         simulator.run(
             auto_earthquake=not args.no_auto_earthquake,
-            earthquake_interval=args.earthquake_interval
+            earthquake_interval=args.earthquake_interval,
+            magnitude_range=(args.magnitude_min, args.magnitude_max),
+            distance_range=(args.distance_min, args.distance_max),
+            stop_after_seconds=args.stop_after
         )
 
 if __name__ == '__main__':

@@ -11,6 +11,7 @@ else()
 endif()
 
 option(USE_BOOST_LOCKFREE "Use Boost.Lockfree queues" OFF)
+option(USE_SPDLOG "Use spdlog for logging" OFF)
 
 set(SOURCES
     src/main.cpp
@@ -26,6 +27,8 @@ set(SOURCES
     src/seismic_simulator.cpp
     src/sensitivity_analyzer.cpp
     src/alarm_mqtt.cpp
+    src/logger.cpp
+    src/prometheus_metrics.cpp
 )
 
 set(HEADERS
@@ -43,6 +46,8 @@ set(HEADERS
     include/seismic_simulator.h
     include/sensitivity_analyzer.h
     include/alarm_mqtt.h
+    include/logger.h
+    include/prometheus_metrics.h
 )
 
 add_executable(seismograph_backend ${SOURCES} ${HEADERS})
@@ -57,6 +62,12 @@ if(USE_BOOST_LOCKFREE)
     find_package(Boost REQUIRED)
     target_include_directories(seismograph_backend PRIVATE ${Boost_INCLUDE_DIRS})
     target_compile_definitions(seismograph_backend PRIVATE SEISMOGRAPH_USE_BOOST_LOCKFREE)
+endif()
+
+if(USE_SPDLOG)
+    find_package(spdlog REQUIRED)
+    target_link_libraries(seismograph_backend PRIVATE spdlog::spdlog)
+    target_compile_definitions(seismograph_backend PRIVATE SEISMOGRAPH_USE_SPDLOG)
 endif()
 
 target_compile_definitions(seismograph_backend PRIVATE _WIN32_WINNT=0x0601)

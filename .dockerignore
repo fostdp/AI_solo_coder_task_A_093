@@ -1,0 +1,61 @@
+# =====================================================
+# .dockerignore
+# =====================================================
+
+# 版本控制
+.git
+.gitignore
+.gitattributes
+.github
+
+# IDE & 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 构建产物
+backend/build/
+backend/cmake-build-*/
+backend/bin/
+backend/lib/
+backend/obj/
+*.o
+*.obj
+*.so
+*.a
+*.dll
+*.exe
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+
+# 日志
+logs/
+*.log
+backend/logs/
+
+# Node (如有)
+node_modules/
+npm-debug.log*
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+*.bak
+
+# 文档草稿
+draft-*
+scratch/

@@ -1,0 +1,279 @@
+version: "3.9"
+
+# =====================================================
+# 古代地动仪都柱地震响应仿真与灵敏度分析系统
+# docker-compose 编排:
+#   1. clickhouse    - TSDB 存储 (传感器数据 / 灵敏度 / 告警)
+#   2. mosquitto     - MQTT Broker (告警消息推送)
+#   3. backend       - C++ 仿真服务 (UDP + HTTP + Prometheus)
+#   4. frontend      - Nginx 静态资源 + API 代理 (Gzip)
+#   5. simulator     - 地动仪模拟器 (Python)
+# =====================================================
+
+x-common-networks: &net
+  networks:
+    - seismograph
+
+services:
+
+  # =====================================================
+  # 1. ClickHouse - 时序数据库
+  # =====================================================
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    container_name: seismograph-clickhouse
+    restart: unless-stopped
+    <<: *net
+    ports:
+      - "8123:8123"   # HTTP 接口
+      - "9000:9000"   # Native 接口
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./database/retention_and_downsampling.sql:/docker-entrypoint-initdb.d/02-downsampling.sql:ro
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    environment:
+      - TZ=Asia/Shanghai
+      - CLICKHOUSE_DB=seismograph
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+
+  # =====================================================
+  # 2. Mosquitto - MQTT Broker (告警推送)
+  # =====================================================
+  mqtt:
+    image: eclipse-mosquitto:2.0-openssl
+    container_name: seismograph-mqtt
+    restart: unless-stopped
+    <<: *net
+    ports:
+      - "1883:1883"   # MQTT
+      - "9001:9001"   # MQTT over WebSocket
+    volumes:
+      - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./deploy/mosquitto/passwd:/mosquitto/config/passwd:ro
+      - mqtt-data:/mosquitto/data
+      - mqtt-log:/mosquitto/log
+    environment:
+      - TZ=Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-h", "127.0.0.1", "-p", "1883", "-t", "$SYS/#", "-C", "1", "-i", "healthcheck"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # =====================================================
+  # 3. C++ 后端仿真服务
+  # =====================================================
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: seismograph-backend
+    restart: unless-stopped
+    <<: *net
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      mqtt:
+        condition: service_healthy
+    ports:
+      - "12345:12345/udp"   # UDP 传感器数据接收
+      - "8080:8080/tcp"     # HTTP API + /metrics
+    volumes:
+      - ./backend/config.json:/app/config.json:ro
+      - backend-logs:/app/logs
+    environment:
+      - TZ=Asia/Shanghai
+      - SEISMOGRAPH_CONFIG=/app/config.json
+    command: ["--config", "/app/config.json"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/stats"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+
+  # =====================================================
+  # 4. 前端 (Nginx + Gzip/Brotli 静态资源 + API 代理)
+  # =====================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: seismograph-frontend
+    restart: unless-stopped
+    <<: *net
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    volumes:
+      - frontend-logs:/var/log/nginx
+    environment:
+      - TZ=Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # =====================================================
+  # 5. 地动仪模拟器 (可选, 通过 profiles 启用)
+  # =====================================================
+  simulator:
+    image: python:3.12-slim
+    container_name: seismograph-simulator
+    restart: "no"
+    <<: *net
+    depends_on:
+      - backend
+    working_dir: /app
+    volumes:
+      - ./simulator/seismograph_simulator.py:/app/seismograph_simulator.py:ro
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+    command:
+      - python3
+      - /app/seismograph_simulator.py
+      - --host
+      - backend
+      - --port
+      - "12345"
+      - --device-id
+      - simulator_docker_01
+      - --interval
+      - "1"
+      - --soil
+      - "1"
+      - --magnitude-min
+      - "3.0"
+      - --magnitude-max
+      - "6.5"
+      - --distance-min
+      - "20"
+      - --distance-max
+      - "200"
+      - --earthquake-interval
+      - "30"
+      - --seed
+      - "42"
+    profiles:
+      - simulator
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+
+  # =====================================================
+  # 6. Prometheus (可选监控, profile: monitoring)
+  # =====================================================
+  prometheus:
+    image: prom/prometheus:v2.54
+    container_name: seismograph-prometheus
+    restart: unless-stopped
+    <<: *net
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    profiles:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # =====================================================
+  # 7. Grafana (可选监控, profile: monitoring)
+  # =====================================================
+  grafana:
+    image: grafana/grafana-oss:11.2.0
+    container_name: seismograph-grafana
+    restart: unless-stopped
+    <<: *net
+    depends_on:
+      - prometheus
+      - clickhouse
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=seismograph
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clickhouse-datasource
+    profiles:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+# =====================================================
+# 网络 & 卷
+# =====================================================
+networks:
+  seismograph:
+    driver: bridge
+    name: seismograph
+
+volumes:
+  clickhouse-data:
+    name: seismograph-clickhouse-data
+  clickhouse-logs:
+    name: seismograph-clickhouse-logs
+  mqtt-data:
+    name: seismograph-mqtt-data
+  mqtt-log:
+    name: seismograph-mqtt-log
+  backend-logs:
+    name: seismograph-backend-logs
+  frontend-logs:
+    name: seismograph-frontend-logs
+  prometheus-data:
+    name: seismograph-prometheus-data
+  grafana-data:
+    name: seismograph-grafana-data

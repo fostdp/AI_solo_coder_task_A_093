@@ -2,6 +2,7 @@
 #include "column_simulation.h"
 #include "sensitivity_analysis.h"
 #include "clickhouse_client.h"
+#include "prometheus_metrics.h"
 #include <sstream>
 #include <iostream>
 #include <chrono>
@@ -112,8 +113,9 @@ bool HttpServer::start(int port) {
               std::bind(&HttpServer::api_run_sensitivity_analysis, this, std::placeholders::_1));
     add_route("GET", "/api/stats", 
               std::bind(&HttpServer::api_get_stats, this, std::placeholders::_1));
+    add_route("GET", "/metrics", 
+              std::bind(&HttpServer::api_get_metrics, this, std::placeholders::_1));
     
-    std::cout << "HTTP Server started on port " << port_ << std::endl;
     return true;
 }
 
@@ -741,6 +743,16 @@ HttpResponse HttpServer::api_get_stats(const HttpRequest&) {
     ss << "}";
     
     response.body = ss.str();
+    return response;
+}
+
+HttpResponse HttpServer::api_get_metrics(const HttpRequest&) {
+    HttpResponse response;
+    response.content_type = "text/plain; version=0.0.4; charset=utf-8";
+    response.body = PrometheusRegistry::instance().expose();
+    
+    PrometheusRegistry::instance().increment_counter("seismograph_http_requests_total", 1.0);
+    
     return response;
 }
 
